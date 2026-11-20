@@ -5,13 +5,14 @@
 ## 模拟业务
 砚田研究协作组，12名分析师与业务人员，日常使用 `seal-fisher-202611-1.csv` 手工抄表。当前三个痛点：观测与口径不可追溯、重算易出错、结果与复核割裂。上游提供独立合成业务观测；本应用接管数据登记、方法执行和输入冻结；下游负责人形成复测/预算方案，观察员获取复核后的CSV。
 
-核心业务实体：SealTrial / TrialCount / ExactRun / TrialDecision。源码 model/schema/service/controller/route 与前端 api/store/pages 完成链路，不依赖浏览器本地假数据。
+核心业务实体：SealTrial / TrialCount / ExactRun / TrialDecision；连续试封派工新增 SealLine / SealPiece。源码 model/schema/service/controller/route 与前端 api/store/pages 完成链路，不依赖浏览器本地假数据。
 
 ## 功能与方法
 - 试封方案、工艺计数录入/编辑/删除；重名记录与非法数值明确拒绝。
 - Fisher精确检验、Wilson单比例区间与率差。两组试件独立，组别预先固定。双侧 p 值是固定边际下概率不大于观察表的所有表之和。
 - 每次运行冻结参数、观测和SHA256。Redis任务由独立worker计算，写DB与共享产物卷；输入修改不会改写历史结果。
 - 负责人复核不可覆盖；审计记录登录、数据改动、排队、复核与导出；240请求/分钟限流、全局可恢复错误。
+- 连续试封派工：按加工顺序登记班次/卷号（≤32件），从全部合规整线排法中等概率抽一套（每班和每卷各自A/B件数相等、同工艺连续至多两件），无解或搜索超5秒拒绝派工并说明原因；首件发出前可整批更正，名单与排法按同一版锁定；逐件派发，交回判定才揭下一件，两工位并发领取只派一方，断线重试返回原领取结果，完工前未派工艺保密。
 
 ## 快速启动
 ```bash
@@ -37,7 +38,18 @@ docker compose exec -T backend python -m scripts.seed_demo
 7. 09:35 admin打开业务复核，写明限制与下一步动作，归档后不可覆盖。
 8. 09:40 viewer读取复核意见并下载CSV，在操作留痕页核对下载事件。
 
-seed提供3次试验×2个工艺组，共6条汇总计数，代表600份独立试件。每次运行每组只允许一条预聚合记录；修正计数应编辑原记录，重复组会明确失败。
+seed提供3次试验×2个工艺组，共6条汇总计数，代表600份独立试件。每次运行每组只允许一条预聚合记录；修正计数应编辑原记录，重复组会明确失败。另提供「砚田·连续试封示范批」8件名单，处于登记中状态，可直接演示领取与判定。
+
+## 连续试封派工
+连续试封时前一工艺会影响下一件，因此整线工艺顺序必须先排定再逐件公开。
+
+1. 登记名单：按加工顺序逐件登记班次与卷号，最多32件。提交即抽排：每班和每卷各自A/B件数相等、同工艺连续至多两件，从全部合规整线排法中等概率抽一套（带备忘录的精确计数+按分支计数比例逐位走取）。无解（如某班件数为奇数）或搜索超5秒均拒绝派工并说明原因。
+2. 整批更正：首件发出前可整体替换名单并重抽；名单与排法在同一事务内换成新版本，并发更正以版本号乐观锁定，慢的一方收到409提示。
+3. 领工艺：工位领取当前件即见工艺；行锁（SELECT ... FOR UPDATE）保证两工位并发只派一方；同工位断线重试返回原领取结果，不重复派工。
+4. 交判定：只有领取工位能交回（合格/不合格），交回后才揭下一件；判定不可覆盖，同工位同判定重试返回原结果。
+5. 保密：完工前任何接口都不返回未派工艺；完工后整线排法公开。登记、更正、领取、判定全部留痕。
+
+接口：`GET/POST /lines`、`GET /lines/{id}`、`PUT /lines/{id}/roster`、`POST /lines/{id}/claim`、`POST /lines/{id}/judge`。页面「连续试封」完成登记名单、领工艺和交判定，派不了时展示后端原因。
 
 ## 技术与目录
 |部分|实现|
@@ -48,7 +60,7 @@ seed提供3次试验×2个工艺组，共6条汇总计数，代表600份独立�
 |数据库|MySQL8|
 |任务|Redis7持久队列，Python独立worker，心跳healthcheck|
 
-`frontend/src/`分api、stores、types、components/common、hooks、pages、router、utils、constants；`backend/src/`分config、models、schemas、services、controllers、routes、middlewares、utils、constants；`backend/scripts/seed_demo.py`自然键插入、重复不覆盖修改；`backend/migrations/README.md`说明schema版本。
+`frontend/src/`分api、stores、types、components/common、hooks、pages、router、utils、constants；`backend/src/`分config、models、schemas、services、controllers、routes、middlewares、utils、constants；`backend/scripts/seed_demo.py`自然键插入、重复不覆盖修改；`backend/migrations/README.md`说明schema版本；`backend/tests/`含排法算法与派工状态机的标准库测试（`python3 tests/test_lineup.py`、`python3 tests/test_dispatch_state.py`）。
 
 环境变量 `.env.example`：COMPOSE_PROJECT_NAME、FRONTEND_PORT、BACKEND_PORT、DB_PORT、DB_PASSWORD、JWT_SECRET、SEED_DEMO。开发时在本地venv安装backend/requirements.txt，设置DATABASE_URL、REDIS_URL、JWT_SECRET再运行uvicorn；前端开发经Nginx代理 `/api/` 到不带前缀的API。
 

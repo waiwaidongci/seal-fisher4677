@@ -7,4 +7,7 @@ main { background-image:linear-gradient(to right, transparent 39px, color-mix(in
 .hero aside { border:1px solid var(--ink);padding:25px 30px; }
 .worksheet { border:1px solid var(--ink);border-top:8px solid var(--accent); }
 th { border-top:2px solid var(--ink); }
-@media(max-width:767px){ .hero {grid-template-columns:1fr} }
+.roster { max-width:900px; }
+.roster-row { display:grid;grid-template-columns:44px 1fr 1fr auto;gap:12px;align-items:center;margin:8px 0; }
+.roster-row .seq { font-family:'IBM Plex Mono',monospace;font-size:12px;text-align:right;color:var(--accent); }
+@media(max-width:767px){ .hero {grid-template-columns:1fr} .roster-row { grid-template-columns:28px 1fr 1fr auto;gap:6px; } }

@@ -6,8 +6,12 @@ from src.config.domain import DOMAIN
 from src.models.user import User
 from src.models.study import Study
 from src.models.observation import Observation
-from src.models import run,review,audit
+from src.models import run,review,audit,line,piece
+from src.models.line import Line
+from src.models.piece import Piece
+from src.services import lineup
 from src.utils.security import hash_password
+from src.utils.serializers import now
 
 def seed():
     Base.metadata.create_all(engine)
@@ -37,6 +41,13 @@ def seed():
                 key=f'DEMO-{k+1}-{n+1:04}'
                 if not db.scalar(select(Observation.id).where(Observation.study_id==study.id,Observation.source_key==key)):
                     db.add(Observation(study_id=study.id,source_key=key,values=values))
+        if not db.scalar(select(Line).where(Line.name=='砚田·连续试封示范批')):
+            roster=[('早班','卷-01'),('早班','卷-02'),('中班','卷-01'),('中班','卷-02'),('早班','卷-03'),('早班','卷-04'),('中班','卷-03'),('中班','卷-04')]
+            arrangement=lineup.sample_lineup(roster)
+            seal_line=Line(name='砚田·连续试封示范批',status='registering',version=1,arrangement=arrangement,created_by='seed',created_at=now())
+            db.add(seal_line);db.flush()
+            for n,((shift,roll),proc) in enumerate(zip(roster,arrangement),1):
+                db.add(Piece(line_id=seal_line.id,seq=n,version=1,shift=shift,roll=roll,process=proc,status='pending'))
         db.commit()
         counts={model.__tablename__:db.scalar(select(func.count()).select_from(model)) for model in (User,Study,Observation)}
         print(json.dumps(counts));return counts
