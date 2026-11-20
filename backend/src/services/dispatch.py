@@ -14,8 +14,10 @@ def _lock(db,id):
     if not line: raise HTTPException(404,'派工批不存在')
     return line
 
-def _pieces(db,id):
-    return list(db.scalars(select(Piece).where(Piece.line_id==id).order_by(Piece.seq)))
+def _pieces(db,id,locked=False):
+    query=select(Piece).where(Piece.line_id==id).order_by(Piece.seq)
+    if locked: query=query.with_for_update()
+    return list(db.scalars(query))
 
 def _public(line,pieces):
     """对外视图：完工前不暴露未派工艺。"""
@@ -67,7 +69,7 @@ def create_line(db,data,user):
 def correct_roster(db,id,data,user):
     """首件发出前整批更正：名单与排法在同一事务内换成新版本。"""
     line=_lock(db,id)
-    pieces=_pieces(db,id)
+    pieces=_pieces(db,id,locked=True)
     if any(p.status!='pending' for p in pieces): raise HTTPException(409,'首件已发出，名单与排法已锁定，不可整批更正')
     if data.version!=line.version: raise HTTPException(409,f'名单已更正为第{line.version}版，请刷新后基于最新版本再改')
     roster=_roster_or_refuse(data.pieces)
@@ -92,7 +94,7 @@ def claim(db,id,data,user):
     if not station: raise HTTPException(422,'请填写工位')
     line=_lock(db,id)
     if line.status=='completed': raise HTTPException(409,'本批已完工，无件可派')
-    current=next((p for p in _pieces(db,id) if p.status!='judged'),None)
+    current=next((p for p in  _pieces(db,id,locked=True) if p.status!='judged'),None)
     if current is None:
         line.status='completed';log(db,user,'line.complete',id);db.commit()
         raise HTTPException(409,'本批已完工，无件可派')
@@ -110,7 +112,7 @@ def judge(db,id,data,user):
     if data.judgment not in JUDGMENTS: raise HTTPException(422,'判定只能为 合格/不合格')
     station=data.station.strip()
     line=_lock(db,id)
-    pieces=_pieces(db,id)
+    pieces=_pieces(db,id,locked=True)
     p=next((x for x in pieces if x.seq==data.seq),None)
     if not p: raise HTTPException(404,'试件不存在')
     if p.status=='pending': raise HTTPException(409,f'第{p.seq}件尚未派发，不能交回判定')
